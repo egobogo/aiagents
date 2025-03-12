@@ -13,22 +13,20 @@ import (
 
 // BackendDeveloperAIAgent specializes in generating code.
 type BackendDeveloperAIAgent struct {
-	*AIAgent           // embed base agent
-	Instruction string // System prompt defining its purpose, inputs, and outputs.
+	*AIAgent // embed base agent
 }
 
 // NewBackendDeveloperAIAgent creates a new backend developer agent.
-func NewBackendDeveloperAIAgent(base *AIAgent, instruction string) *BackendDeveloperAIAgent {
+func NewBackendDeveloperAIAgent(base *AIAgent) *BackendDeveloperAIAgent {
 	return &BackendDeveloperAIAgent{
-		AIAgent:     base,
-		Instruction: instruction,
+		AIAgent: base,
 	}
 }
 
 // GenerateCode generates Go code based on a specific task.
 func (b *BackendDeveloperAIAgent) GenerateCode(task string) (string, error) {
 	// Combine the specialized instruction with the task.
-	prompt := fmt.Sprintf("%s\nTask: %s", b.Instruction, task)
+	prompt := fmt.Sprintf("Task: %s", task)
 	return b.GPTClient.Chat(prompt)
 }
 
@@ -105,7 +103,8 @@ func (b *BackendDeveloperAIAgent) ExecuteTechnicalAssignment(ticket *trello.Card
 	}
 
 	// Combine the remaining lines as the code content.
-	codeContent := strings.Join(lines[1:], "\n")
+	rawCodeContent := strings.Join(lines[1:], "\n")
+	codeContent := cleanCodeOutput(rawCodeContent)
 
 	// Write the generated code to the Git repository using the full file path.
 	if err := b.WriteToGit(filePath, []byte(codeContent)); err != nil {
@@ -120,6 +119,29 @@ func (b *BackendDeveloperAIAgent) ExecuteTechnicalAssignment(ticket *trello.Card
 	}
 
 	return commitMessage, nil
+}
+
+// cleanCodeOutput removes any markdown formatting (like triple backticks)
+// from the GPT-generated code.
+func cleanCodeOutput(code string) string {
+	// Remove leading and trailing whitespace.
+	code = strings.TrimSpace(code)
+
+	// Remove starting triple backticks and optional language specifier.
+	if strings.HasPrefix(code, "```") {
+		// Find the first newline after the opening backticks.
+		idx := strings.Index(code, "\n")
+		if idx != -1 {
+			code = code[idx+1:]
+		}
+	}
+
+	// Remove trailing triple backticks.
+	if strings.HasSuffix(code, "```") {
+		code = strings.TrimSuffix(code, "```")
+	}
+
+	return strings.TrimSpace(code)
 }
 
 // CommitAndPushTicketResult commits changes and pushes them to the remote repository.

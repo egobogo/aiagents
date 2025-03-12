@@ -213,9 +213,7 @@ func (tc *TrelloClient) GetMemberByName(username string) (*adlio.Member, error) 
 	}
 
 	// Iterate through members and return the one that matches.
-	log.Println("here are our users")
 	for _, m := range members {
-		log.Println(m.Username)
 		if m.Username == username {
 			return m, nil
 		}

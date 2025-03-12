@@ -18,6 +18,39 @@ type AIAgent struct {
 	TrelloClient *trello.TrelloClient
 	GitClient    *gitrepo.GitClient
 	GPTClient    *chatgpt.ChatGPTClient
+	Purpose      string
+}
+
+// NewBaseAgent initializes and returns a new AIAgent.
+// It sets the agent's purpose by sending a system message to the GPT client,
+// and it loads the project guidance from the "IMPORTANT" Trello column.
+func NewBaseAgent(name string, trelloClient *trello.TrelloClient, gitClient *gitrepo.GitClient, gptClient *chatgpt.ChatGPTClient, purpose string) (*AIAgent, error) {
+	agent := &AIAgent{
+		Name:         name,
+		TrelloClient: trelloClient,
+		GitClient:    gitClient,
+		GPTClient:    gptClient,
+		Purpose:      purpose,
+	}
+
+	// Load project guidance tickets into GPT context.
+	if err := agent.LoadGuidanceTickets(); err != nil {
+		log.Printf("Warning: Failed to load guidance tickets for agent %s: %v", name, err)
+		// Optionally, you might not want to fail the initialization if guidance is missing.
+	}
+
+	// Send the purpose to GPT as a system message.
+	messages := []chatgpt.Message{
+		{Role: "system", Content: purpose},
+	}
+	_, err := agent.GPTClient.ChatWithMessages(messages)
+	if err != nil {
+		log.Printf("Failed to set purpose for agent %s: %v", name, err)
+		// Depending on your policy, you may choose to return an error or continue.
+		return nil, fmt.Errorf("failed to set purpose: %w", err)
+	}
+	log.Printf("Agent %s initialized with purpose: %s", name, purpose)
+	return agent, nil
 }
 
 // TicketBelongsToMe checks if a Trello card is assigned to this agent.
@@ -88,7 +121,6 @@ func (a *AIAgent) WriteToGit(fileName string, content []byte) error {
 
 // StartRoutine reminds the agent of its goal and observes the Git repository.
 func (a *AIAgent) StartRoutine() error {
-	log.Printf("Agent %s starting routine: observing repository...", a.Name)
 	files, err := a.ReadAllGitFiles()
 	if err != nil {
 		return err
@@ -117,7 +149,6 @@ func (a *AIAgent) GetAssignedTickets() ([]*trello.Card, error) {
 			assigned = append(assigned, card)
 			if needToRefreshContext {
 				refreshErr := a.RefreshProjectContext()
-				log.Println("%s has just refreshed context ", a.Name)
 				if refreshErr != nil {
 					return nil, fmt.Errorf("failed to refresh context: %w", refreshErr)
 				}
@@ -164,5 +195,55 @@ func (a *AIAgent) RefreshProjectContext() error {
 		return fmt.Errorf("failed to update GPT context: %w", err)
 	}
 
+	return nil
+}
+
+// LoadGuidanceTickets retrieves all cards from the "IMPORTANT" list,
+// aggregates their titles and descriptions, and sends them to the GPT client as a system message.
+func (a *AIAgent) LoadGuidanceTickets() error {
+	// Get the list ID for the IMPORTANT column.
+	listID, err := a.TrelloClient.GetListIDByName("IMPORTANT")
+	if err != nil {
+		return fmt.Errorf("failed to get list ID for IMPORTANT: %w", err)
+	}
+
+	// Retrieve the board.
+	board, err := a.TrelloClient.GetBoard()
+	if err != nil {
+		return fmt.Errorf("failed to get board: %w", err)
+	}
+
+	// Retrieve all cards from the board.
+	cards, err := board.GetCards(nil)
+	if err != nil {
+		return fmt.Errorf("failed to get cards from board: %w", err)
+	}
+
+	// Aggregate guidance text from cards in the IMPORTANT list.
+	var guidanceBuilder strings.Builder
+	guidanceBuilder.WriteString("Guidance Tickets:\n")
+	for _, card := range cards {
+		if card.IDList == listID {
+			guidanceBuilder.WriteString(fmt.Sprintf("Title: %s\n", card.Name))
+			guidanceBuilder.WriteString(fmt.Sprintf("Details: %s\n\n", card.Desc))
+		}
+	}
+	guidanceText := guidanceBuilder.String()
+	if guidanceText == "Guidance Tickets:\n" {
+		// No guidance tickets found.
+		return nil
+	}
+
+	// Send the aggregated guidance as a system message to GPT.
+	messages := []chatgpt.Message{
+		{Role: "system", Content: guidanceText},
+	}
+	// We don't use the response; this call is meant to update GPT's context.
+	_, err = a.GPTClient.ChatWithMessages(messages)
+	if err != nil {
+		return fmt.Errorf("failed to update GPT guidance context: %w", err)
+	}
+
+	log.Printf("Guidance tickets sent to GPT client.")
 	return nil
 }

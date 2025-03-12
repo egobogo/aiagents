@@ -13,7 +13,6 @@ import (
 // EngineeringManagerAIAgent specializes in ticket analysis and task decomposition.
 type EngineeringManagerAIAgent struct {
 	*AIAgent
-	Instruction string // System prompt detailing its purpose.
 }
 
 // AssignTicketToAgent assigns the given ticket (card) to the specified agent by updating its member assignment.
@@ -33,10 +32,9 @@ func (e *EngineeringManagerAIAgent) AssignTicketToAgent(card *trello.Card, agent
 }
 
 // NewEngineeringManagerAIAgent creates a new engineering manager agent.
-func NewEngineeringManagerAIAgent(base *AIAgent, instruction string) *EngineeringManagerAIAgent {
+func NewEngineeringManagerAIAgent(base *AIAgent) *EngineeringManagerAIAgent {
 	return &EngineeringManagerAIAgent{
-		AIAgent:     base,
-		Instruction: instruction,
+		AIAgent: base,
 	}
 }
 
@@ -44,24 +42,19 @@ func NewEngineeringManagerAIAgent(base *AIAgent, instruction string) *Engineerin
 // posting them (tagging @bogoego), waiting for a reply that tags @egobogoengmanageragent,
 // and finally passing that reply to GPT.
 func (e *EngineeringManagerAIAgent) HandleTicket(card *trello.Card) ([]*trello.Card, error) {
-	// 1. Scan and read the Git repository.
-	gitFiles, err := e.ReadAllGitFiles() // method defined in the base agent
-	if err != nil {
-		return nil, fmt.Errorf("failed to read git repository: %w", err)
-	}
-	// Build a simple summary of the repository.
-	var gitSummary strings.Builder
-	for file, content := range gitFiles {
-		gitSummary.WriteString(fmt.Sprintf("File: %s\nContent:\n%s\n----------------\n", file, content))
-	}
-
 	// 2. Pass the ticket details and git context to GPT to generate clarifications.
 	ticketInfo := fmt.Sprintf("Ticket ID: %s\nTitle: %s\nDescription: %s", card.ID, card.Name, card.Desc)
 	prompt := fmt.Sprintf(
-		"Given the following Git repository context: % sand the ticket details:%s\n"+
-			"You are the definitive technical authority for this project. You have complete expertise in all technical areas—choosing the best libraries, applying the most appropriate design patterns, and enforcing optimal coding standards and technical constraints. You already know what technical choices to make.\n"+
-			"Your sole responsibility here is to ensure that the ticket’s requirements are unambiguous from a business perspective. If you detect any ambiguity or lack of clarity regarding the business objectives or requirements in the ticket, ask a concise question to the Product Manager to clarify these aspects. Do not ask about technical details such as libraries, design patterns, coding standards, or technical constraints.\n"+
-			"Generate a list of clarifying questions that focus exclusively on any potential business ambiguities in the ticket. If the ticket is clear from a business standpoint, simply confirm that the task is technically sound.", gitSummary.String(), ticketInfo)
+		"Given the following ticket details:%s\n"+
+			"You are a highly skilled AI Engineering Manager agent. Your role is to confirm that the business requirements of this ticket are clear. You already know the best technical approaches, including libraries, design patterns, testing frameworks, coding standards, and all other technical details. Do NOT ask any questions about these technical matters.\n"+
+			"Do NOT ask about:\n"+
+			"- Commenting guidelines or documentation standards.\n"+
+			"- Performance benchmarks or optimizations.\n"+
+			"- Review processes, stakeholder impacts, or timelines.\n"+
+			"- Any technical details regarding libraries, design patterns, or testing frameworks.\n"+
+			"- Any summaries, headers, footers, unrelated comments.\n"+
+			"Only ask clarifying questions if there is any ambiguity in the business requirements. Do not ask about commenting guidelines, performance, review processes, stakeholder impacts, timelines, or any technical specifics.\n"+
+			"Ask concise questions about any missing business objectives. Make sure you really understand what the fuction is about to be ready to write technical tickets.", ticketInfo)
 	clarifications, err := e.GPTClient.Chat(prompt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate clarifications: %w", err)
@@ -179,7 +172,7 @@ func (e *EngineeringManagerAIAgent) WaitForReply(card *trello.Card, requiredTag 
 // RespondToClarification generates a clarification response using ChatGPT and posts it as a comment.
 func (e *EngineeringManagerAIAgent) RespondToClarification(ticket *trello.Card, clarificationRequest string, backend *BackendDeveloperAIAgent) (string, error) {
 	// Build a prompt that includes the agent's instruction and the clarification request.
-	prompt := fmt.Sprintf("%s\nPlease provide a detailed clarification for the following request: %s", e.Instruction, clarificationRequest)
+	prompt := fmt.Sprintf("Provide a detailed clarification for the following request from the developer agent. Always answer questions, don't ask them. Remember - your vision is the source of all engineering truth of the project. Here is the question from the engineer: %s", clarificationRequest)
 
 	clarification, err := e.GPTClient.Chat(prompt)
 	if err != nil {
@@ -187,7 +180,7 @@ func (e *EngineeringManagerAIAgent) RespondToClarification(ticket *trello.Card, 
 	}
 
 	// Construct the response comment tagging the backend agent.
-	responseComment := fmt.Sprintf("Engineering Manager Response: %s @%s", clarification, backend.Name)
+	responseComment := fmt.Sprintf("Response: %s @%s", clarification, backend.Name)
 	if err := e.WriteComment(ticket, responseComment); err != nil {
 		return "", fmt.Errorf("failed to post clarification response: %w", err)
 	}
